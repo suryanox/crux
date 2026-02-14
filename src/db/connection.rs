@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{Column, Row};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use super::{QueryResult, TableInfo};
 
@@ -101,16 +101,8 @@ impl DatabaseConnection {
                 let data: Vec<Vec<String>> = rows
                     .iter()
                     .map(|row| {
-                        columns
-                            .iter()
-                            .map(|col| {
-                                row.try_get::<String, _>(col.as_str())
-                                    .or_else(|_| row.try_get::<i64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<i32, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<f64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<bool, _>(col.as_str()).map(|v| v.to_string()))
-                                    .unwrap_or_else(|_| "NULL".to_string())
-                            })
+                        (0..columns.len())
+                            .map(|idx| extract_pg_value(row, idx))
                             .collect()
                     })
                     .collect();
@@ -136,16 +128,8 @@ impl DatabaseConnection {
                 let data: Vec<Vec<String>> = rows
                     .iter()
                     .map(|row| {
-                        columns
-                            .iter()
-                            .map(|col| {
-                                row.try_get::<String, _>(col.as_str())
-                                    .or_else(|_| row.try_get::<i64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<i32, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<f64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<bool, _>(col.as_str()).map(|v| v.to_string()))
-                                    .unwrap_or_else(|_| "NULL".to_string())
-                            })
+                        (0..columns.len())
+                            .map(|idx| extract_mysql_value(row, idx))
                             .collect()
                     })
                     .collect();
@@ -171,16 +155,8 @@ impl DatabaseConnection {
                 let data: Vec<Vec<String>> = rows
                     .iter()
                     .map(|row| {
-                        columns
-                            .iter()
-                            .map(|col| {
-                                row.try_get::<String, _>(col.as_str())
-                                    .or_else(|_| row.try_get::<i64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<i32, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<f64, _>(col.as_str()).map(|v| v.to_string()))
-                                    .or_else(|_| row.try_get::<bool, _>(col.as_str()).map(|v| v.to_string()))
-                                    .unwrap_or_else(|_| "NULL".to_string())
-                            })
+                        (0..columns.len())
+                            .map(|idx| extract_sqlite_value(row, idx))
                             .collect()
                     })
                     .collect();
@@ -193,4 +169,270 @@ impl DatabaseConnection {
             }
         }
     }
+}
+
+fn extract_pg_value(row: &sqlx::postgres::PgRow, idx: usize) -> String {
+    let value_ref = row.try_get_raw(idx).ok();
+    
+    if let Some(vr) = value_ref {
+        if vr.is_null() {
+            return "NULL".to_string();
+        }
+        
+        let type_info = vr.type_info().clone();
+        let type_name = type_info.name();
+        
+        match type_name {
+            "BOOL" => {
+                if let Ok(v) = row.try_get::<bool, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "INT2" | "SMALLINT" | "SMALLSERIAL" => {
+                if let Ok(v) = row.try_get::<i16, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "INT4" | "INT" | "INTEGER" | "SERIAL" => {
+                if let Ok(v) = row.try_get::<i32, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "INT8" | "BIGINT" | "BIGSERIAL" => {
+                if let Ok(v) = row.try_get::<i64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "FLOAT4" | "REAL" => {
+                if let Ok(v) = row.try_get::<f32, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "FLOAT8" | "DOUBLE PRECISION" => {
+                if let Ok(v) = row.try_get::<f64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "NUMERIC" | "DECIMAL" => {
+                if let Ok(v) = row.try_get::<sqlx::types::BigDecimal, _>(idx) {
+                    return v.to_string();
+                }
+                if let Ok(v) = row.try_get::<f64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => {
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            "UUID" => {
+                if let Ok(v) = row.try_get::<sqlx::types::Uuid, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "DATE" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TIME" | "TIMETZ" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveTime, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TIMESTAMP" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TIMESTAMPTZ" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "JSON" | "JSONB" => {
+                if let Ok(v) = row.try_get::<sqlx::types::JsonValue, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "BYTEA" => {
+                if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+                    return format!("\\x{}", hex::encode(v));
+                }
+            }
+            "INET" | "CIDR" => {
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    row.try_get::<String, _>(idx)
+        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<f64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<bool, _>(idx).map(|v| v.to_string()))
+        .unwrap_or_else(|_| "NULL".to_string())
+}
+
+fn extract_mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> String {
+    let value_ref = row.try_get_raw(idx).ok();
+    
+    if let Some(vr) = value_ref {
+        if vr.is_null() {
+            return "NULL".to_string();
+        }
+        
+        let type_info = vr.type_info().clone();
+        let type_name = type_info.name();
+        
+        match type_name {
+            "BOOLEAN" | "TINYINT(1)" => {
+                if let Ok(v) = row.try_get::<bool, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TINYINT" => {
+                if let Ok(v) = row.try_get::<i8, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "SMALLINT" => {
+                if let Ok(v) = row.try_get::<i16, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "INT" | "MEDIUMINT" => {
+                if let Ok(v) = row.try_get::<i32, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "BIGINT" => {
+                if let Ok(v) = row.try_get::<i64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "FLOAT" => {
+                if let Ok(v) = row.try_get::<f32, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "DOUBLE" => {
+                if let Ok(v) = row.try_get::<f64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "DECIMAL" => {
+                if let Ok(v) = row.try_get::<sqlx::types::BigDecimal, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "VARCHAR" | "CHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => {
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            "DATE" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TIME" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveTime, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "DATETIME" | "TIMESTAMP" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "JSON" => {
+                if let Ok(v) = row.try_get::<sqlx::types::JsonValue, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+                if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+                    return format!("0x{}", hex::encode(v));
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    row.try_get::<String, _>(idx)
+        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<f64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<bool, _>(idx).map(|v| v.to_string()))
+        .unwrap_or_else(|_| "NULL".to_string())
+}
+
+fn extract_sqlite_value(row: &sqlx::sqlite::SqliteRow, idx: usize) -> String {
+    let value_ref = row.try_get_raw(idx).ok();
+    
+    if let Some(vr) = value_ref {
+        if vr.is_null() {
+            return "NULL".to_string();
+        }
+        
+        let type_info = vr.type_info().clone();
+        let type_name = type_info.name();
+        
+        match type_name {
+            "INTEGER" => {
+                if let Ok(v) = row.try_get::<i64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "REAL" => {
+                if let Ok(v) = row.try_get::<f64, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "TEXT" => {
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            "BLOB" => {
+                if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+                    return format!("X'{}'", hex::encode(v));
+                }
+            }
+            "BOOLEAN" => {
+                if let Ok(v) = row.try_get::<bool, _>(idx) {
+                    return v.to_string();
+                }
+            }
+            "DATE" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(idx) {
+                    return v.to_string();
+                }
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            "DATETIME" | "TIMESTAMP" => {
+                if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(idx) {
+                    return v.to_string();
+                }
+                if let Ok(v) = row.try_get::<String, _>(idx) {
+                    return v;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    row.try_get::<String, _>(idx)
+        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<f64, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<bool, _>(idx).map(|v| v.to_string()))
+        .or_else(|_| row.try_get::<Vec<u8>, _>(idx).map(|v| format!("X'{}'", hex::encode(v))))
+        .unwrap_or_else(|_| "NULL".to_string())
 }

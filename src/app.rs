@@ -2,12 +2,19 @@ use ratatui::widgets::{ListState, TableState};
 use tui_textarea::TextArea;
 
 use crate::db::{DatabaseConnection, QueryResult, TableInfo};
+use crate::storage::RecentConnection;
 use crate::ui::QueryButton;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
     Connection,
     Browser,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionFocus {
+    RecentList,
+    NewInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +39,9 @@ pub struct App<'a> {
     pub result_state: TableState,
     pub should_quit: bool,
     pub query_area: Option<ratatui::layout::Rect>,
+    pub recent_connections: Vec<RecentConnection>,
+    pub recent_connections_state: ListState,
+    pub connection_focus: ConnectionFocus,
 }
 
 impl<'a> App<'a> {
@@ -56,7 +66,70 @@ impl<'a> App<'a> {
             result_state: TableState::default(),
             should_quit: false,
             query_area: None,
+            recent_connections: vec![],
+            recent_connections_state: ListState::default(),
+            connection_focus: ConnectionFocus::RecentList,
         }
+    }
+
+    pub fn set_recent_connections(&mut self, connections: Vec<RecentConnection>) {
+        self.recent_connections = connections;
+        if !self.recent_connections.is_empty() {
+            self.recent_connections_state.select(Some(0));
+            self.connection_focus = ConnectionFocus::RecentList;
+        } else {
+            self.connection_focus = ConnectionFocus::NewInput;
+        }
+    }
+
+    pub fn select_next_recent(&mut self) {
+        if self.recent_connections.is_empty() {
+            return;
+        }
+        let i = match self.recent_connections_state.selected() {
+            Some(i) => (i + 1) % self.recent_connections.len(),
+            None => 0,
+        };
+        self.recent_connections_state.select(Some(i));
+    }
+
+    pub fn select_prev_recent(&mut self) {
+        if self.recent_connections.is_empty() {
+            return;
+        }
+        let i = match self.recent_connections_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.recent_connections.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.recent_connections_state.select(Some(i));
+    }
+
+    pub fn get_selected_recent_connection(&self) -> Option<&RecentConnection> {
+        self.recent_connections_state
+            .selected()
+            .and_then(|i| self.recent_connections.get(i))
+    }
+
+    pub fn toggle_connection_focus(&mut self) {
+        self.connection_focus = match self.connection_focus {
+            ConnectionFocus::RecentList => ConnectionFocus::NewInput,
+            ConnectionFocus::NewInput => {
+                if !self.recent_connections.is_empty() {
+                    if self.recent_connections_state.selected().is_none() {
+                        self.recent_connections_state.select(Some(0));
+                    }
+                    ConnectionFocus::RecentList
+                } else {
+                    ConnectionFocus::NewInput
+                }
+            }
+        };
     }
 
     pub fn select_next_table(&mut self) {

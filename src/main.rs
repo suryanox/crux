@@ -1,6 +1,7 @@
 mod app;
 mod db;
 mod event;
+mod storage;
 mod ui;
 
 use std::io;
@@ -14,13 +15,16 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, Terminal};
 
-use app::{App, AppState, Focus};
+use app::{App, AppState, ConnectionFocus, Focus};
 use db::DatabaseConnection;
 use event::{is_ctrl_enter, poll_event};
+use storage::Storage;
 use ui::{render_connection_dialog, render_query_panel, render_results, render_sidebar, get_button_at_position, QueryButton};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let storage = Storage::new().await?;
+    
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -28,7 +32,12 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
-    let result = run_app(&mut terminal, &mut app).await;
+    
+    if let Ok(recent) = storage.get_recent_connections(10).await {
+        app.set_recent_connections(recent);
+    }
+    
+    let result = run_app(&mut terminal, &mut app, &storage).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
@@ -44,6 +53,7 @@ async fn main() -> Result<()> {
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App<'_>,
+    storage: &Storage,
 ) -> Result<()> {
     loop {
         terminal.draw(|frame| {
@@ -53,6 +63,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                         frame,
                         &app.connection_input,
                         app.connection_error.as_deref(),
+                        &app.recent_connections,
+                        &mut app.recent_connections_state,
+                        app.connection_focus,
                     );
                 }
                 AppState::Browser => {
@@ -103,9 +116,22 @@ async fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Esc => {
                                 app.should_quit = true;
                             }
+                            KeyCode::Tab => {
+                                app.toggle_connection_focus();
+                            }
                             KeyCode::Enter => {
-                                let conn_str = app.connection_input.lines().join("");
-                                if !conn_str.is_empty() {
+                                let conn_str = match app.connection_focus {
+                                    ConnectionFocus::RecentList => {
+                                        app.get_selected_recent_connection()
+                                            .map(|c| c.connection_string.clone())
+                                    }
+                                    ConnectionFocus::NewInput => {
+                                        let input = app.connection_input.lines().join("");
+                                        if input.is_empty() { None } else { Some(input) }
+                                    }
+                                };
+                                
+                                if let Some(conn_str) = conn_str {
                                     match DatabaseConnection::connect(&conn_str).await {
                                         Ok(conn) => {
                                             match conn.get_tables().await {
@@ -120,6 +146,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                                     continue;
                                                 }
                                             }
+                                            let _ = storage.add_connection(&conn_str).await;
+                                            
                                             app.connection = Some(conn);
                                             app.connection_error = None;
                                             app.state = AppState::Browser;
@@ -130,8 +158,27 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     }
                                 }
                             }
+                            KeyCode::Delete | KeyCode::Backspace if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.connection_focus == ConnectionFocus::RecentList {
+                                    if let Some(conn) = app.get_selected_recent_connection() {
+                                        let id = conn.id;
+                                        let _ = storage.delete_connection(id).await;
+                                        if let Ok(recent) = storage.get_recent_connections(10).await {
+                                            app.set_recent_connections(recent);
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') if app.connection_focus == ConnectionFocus::RecentList => {
+                                app.select_next_recent();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') if app.connection_focus == ConnectionFocus::RecentList => {
+                                app.select_prev_recent();
+                            }
                             _ => {
-                                app.connection_input.input(event);
+                                if app.connection_focus == ConnectionFocus::NewInput {
+                                    app.connection_input.input(event);
+                                }
                             }
                         }
                     }
