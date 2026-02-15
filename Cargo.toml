@@ -1,11 +1,11 @@
 [package]
 name = "crux"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
 ratatui = "0.29"
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1.43", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid", "json", "bigdecimal"] }
 anyhow = "1.0"
@@ -13,3 +13,4 @@ tui-textarea = "0.7"
 hex = "0.4"
 dirs = "5"
 chrono = "0.4"
+unicode-width = "0.2"

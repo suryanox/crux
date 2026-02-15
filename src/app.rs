@@ -1,9 +1,10 @@
-use ratatui::widgets::{ListState, TableState};
+use ratatui::widgets::ListState;
 use tui_textarea::TextArea;
 
 use crate::db::{DatabaseConnection, QueryResult, TableInfo};
 use crate::storage::RecentConnection;
-use crate::ui::QueryButton;
+use crate::ui::{QueryButton, TreeState, ResultsState};
+use crate::ui::query::ButtonRegion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
@@ -29,19 +30,21 @@ pub struct App<'a> {
     pub state: AppState,
     pub focus: Focus,
     pub selected_button: QueryButton,
+    pub hovered_button: QueryButton,
     pub connection_input: TextArea<'a>,
     pub connection_error: Option<String>,
     pub connection: Option<DatabaseConnection>,
     pub tables: Vec<TableInfo>,
-    pub table_state: ListState,
+    pub tree_state: TreeState,
     pub query_input: TextArea<'a>,
     pub query_result: QueryResult,
-    pub result_state: TableState,
+    pub results_state: ResultsState,
     pub should_quit: bool,
-    pub query_area: Option<ratatui::layout::Rect>,
+    pub button_region: Option<ButtonRegion>,
     pub recent_connections: Vec<RecentConnection>,
     pub recent_connections_state: ListState,
     pub connection_focus: ConnectionFocus,
+    pub sidebar_area: Option<ratatui::layout::Rect>,
 }
 
 impl<'a> App<'a> {
@@ -56,20 +59,27 @@ impl<'a> App<'a> {
             state: AppState::Connection,
             focus: Focus::Sidebar,
             selected_button: QueryButton::None,
+            hovered_button: QueryButton::None,
             connection_input,
             connection_error: None,
             connection: None,
             tables: vec![],
-            table_state: ListState::default(),
+            tree_state: TreeState::default(),
             query_input,
             query_result: QueryResult::empty(),
-            result_state: TableState::default(),
+            results_state: ResultsState::new(),
             should_quit: false,
-            query_area: None,
+            button_region: None,
             recent_connections: vec![],
             recent_connections_state: ListState::default(),
             connection_focus: ConnectionFocus::RecentList,
+            sidebar_area: None,
         }
+    }
+
+    pub fn set_tables(&mut self, tables: Vec<TableInfo>) {
+        self.tree_state = TreeState::from_tables(&tables);
+        self.tables = tables;
     }
 
     pub fn set_recent_connections(&mut self, connections: Vec<RecentConnection>) {
@@ -132,68 +142,6 @@ impl<'a> App<'a> {
         };
     }
 
-    pub fn select_next_table(&mut self) {
-        if self.tables.is_empty() {
-            return;
-        }
-        let i = match self.table_state.selected() {
-            Some(i) => (i + 1) % self.tables.len(),
-            None => 0,
-        };
-        self.table_state.select(Some(i));
-    }
-
-    pub fn select_prev_table(&mut self) {
-        if self.tables.is_empty() {
-            return;
-        }
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.tables.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.table_state.select(Some(i));
-    }
-
-    pub fn select_next_row(&mut self) {
-        if self.query_result.rows.is_empty() {
-            return;
-        }
-        let i = match self.result_state.selected() {
-            Some(i) => (i + 1) % self.query_result.rows.len(),
-            None => 0,
-        };
-        self.result_state.select(Some(i));
-    }
-
-    pub fn select_prev_row(&mut self) {
-        if self.query_result.rows.is_empty() {
-            return;
-        }
-        let i = match self.result_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.query_result.rows.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.result_state.select(Some(i));
-    }
-
-    pub fn get_selected_table(&self) -> Option<&TableInfo> {
-        self.table_state
-            .selected()
-            .and_then(|i| self.tables.get(i))
-    }
-
     pub fn cycle_focus(&mut self) {
         self.focus = match self.focus {
             Focus::Sidebar => Focus::Query,
@@ -203,20 +151,6 @@ impl<'a> App<'a> {
         };
         if self.focus == Focus::QueryButtons {
             self.selected_button = QueryButton::Run;
-        } else {
-            self.selected_button = QueryButton::None;
-        }
-    }
-
-    pub fn cycle_focus_reverse(&mut self) {
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Results,
-            Focus::Query => Focus::Sidebar,
-            Focus::QueryButtons => Focus::Query,
-            Focus::Results => Focus::QueryButtons,
-        };
-        if self.focus == Focus::QueryButtons {
-            self.selected_button = QueryButton::Copy;
         } else {
             self.selected_button = QueryButton::None;
         }
@@ -247,5 +181,23 @@ impl<'a> App<'a> {
 
     pub fn get_query_text(&self) -> String {
         self.query_input.lines().join("\n")
+    }
+
+    pub fn set_query_result(&mut self, result: QueryResult) {
+        self.results_state.reset();
+        self.query_result = result;
+    }
+
+    pub fn handle_sidebar_click(&mut self, x: u16, y: u16) -> bool {
+        if let Some(area) = self.sidebar_area {
+            if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
+                let relative_y = y.saturating_sub(area.y + 1) as usize;
+                let visible_idx = self.tree_state.scroll_offset + relative_y;
+                self.tree_state.select_by_click(visible_idx);
+                self.focus = Focus::Sidebar;
+                return true;
+            }
+        }
+        false
     }
 }

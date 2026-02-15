@@ -1,13 +1,12 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use tui_textarea::TextArea;
 
-use super::{BORDER_COLOR, HIGHLIGHT_COLOR, TEXT_COLOR};
+use super::theme::{icons, Theme};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryButton {
@@ -17,70 +16,105 @@ pub enum QueryButton {
     Copy,
 }
 
+pub struct ButtonRegion {
+    pub run: Rect,
+    pub clear: Rect,
+    pub copy: Rect,
+}
+
+impl ButtonRegion {
+    pub fn hit_test(&self, x: u16, y: u16) -> QueryButton {
+        if self.run.x <= x && x < self.run.x + self.run.width && self.run.y <= y && y < self.run.y + self.run.height {
+            return QueryButton::Run;
+        }
+        if self.clear.x <= x && x < self.clear.x + self.clear.width && self.clear.y <= y && y < self.clear.y + self.clear.height {
+            return QueryButton::Clear;
+        }
+        if self.copy.x <= x && x < self.copy.x + self.copy.width && self.copy.y <= y && y < self.copy.y + self.copy.height {
+            return QueryButton::Copy;
+        }
+        QueryButton::None
+    }
+}
+
 pub fn render_query_panel(
     frame: &mut Frame,
     area: Rect,
     textarea: &TextArea,
     focused: bool,
     selected_button: QueryButton,
-) {
-    let border_color = if focused { HIGHLIGHT_COLOR } else { BORDER_COLOR };
+    hovered_button: QueryButton,
+    theme: &Theme,
+) -> ButtonRegion {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
+        .split(area);
 
-    let run_style = button_style(selected_button == QueryButton::Run);
-    let clear_style = button_style(selected_button == QueryButton::Clear);
-    let copy_style = button_style(selected_button == QueryButton::Copy);
+    let button_area = chunks[0];
+    let editor_area = chunks[1];
 
-    let title = Line::from(vec![
-        Span::styled(" Query ", Style::default().fg(TEXT_COLOR)),
-        Span::raw("│ "),
-        Span::styled(" ▶ Run ", run_style),
-        Span::raw(" "),
-        Span::styled(" ✕ Clear ", clear_style),
-        Span::raw(" "),
-        Span::styled(" ⎘ Copy ", copy_style),
-        Span::raw(" "),
-    ]);
+    let inner_button_area = Rect::new(
+        button_area.x + 1,
+        button_area.y + 1,
+        button_area.width.saturating_sub(2),
+        1,
+    );
+
+    let run_width = 10u16;
+    let clear_width = 11u16;
+    let copy_width = 10u16;
+    let spacing = 2u16;
+
+    let run_rect = Rect::new(inner_button_area.x, inner_button_area.y, run_width, 1);
+    let clear_rect = Rect::new(inner_button_area.x + run_width + spacing, inner_button_area.y, clear_width, 1);
+    let copy_rect = Rect::new(inner_button_area.x + run_width + spacing + clear_width + spacing, inner_button_area.y, copy_width, 1);
+
+    let button_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.block_style(focused))
+        .style(Style::default().bg(theme.bg_secondary));
+
+    frame.render_widget(button_block, button_area);
+
+    let run_style = get_button_style(QueryButton::Run, selected_button, hovered_button, theme);
+    let clear_style = get_button_style(QueryButton::Clear, selected_button, hovered_button, theme);
+    let copy_style = get_button_style(QueryButton::Copy, selected_button, hovered_button, theme);
+
+    let run_text = format!(" {} Run ", icons::PLAY);
+    let clear_text = format!(" {} Clear ", icons::CLEAR);
+    let copy_text = format!(" {} Copy ", icons::COPY);
+
+    frame.render_widget(Paragraph::new(run_text).style(run_style), run_rect);
+    frame.render_widget(Paragraph::new(clear_text).style(clear_style), clear_rect);
+    frame.render_widget(Paragraph::new(copy_text).style(copy_style), copy_rect);
 
     let mut ta = textarea.clone();
     ta.set_block(
         Block::default()
-            .title(title)
+            .title(" SQL ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color)),
+            .border_style(theme.block_style(focused))
+            .style(Style::default().bg(theme.bg_secondary)),
     );
-    ta.set_style(Style::default().fg(TEXT_COLOR));
-    ta.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+    ta.set_style(theme.text_style());
+    ta.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED).bg(theme.accent));
 
-    frame.render_widget(&ta, area);
-}
+    frame.render_widget(&ta, editor_area);
 
-fn button_style(selected: bool) -> Style {
-    if selected {
-        Style::default()
-            .fg(ratatui::style::Color::Black)
-            .bg(HIGHLIGHT_COLOR)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(HIGHLIGHT_COLOR)
+    ButtonRegion {
+        run: run_rect,
+        clear: clear_rect,
+        copy: copy_rect,
     }
 }
 
-pub fn get_button_at_position(area: Rect, x: u16, y: u16) -> QueryButton {
-    if y != area.y {
-        return QueryButton::None;
-    }
-
-    let title_start = area.x + 1;
-    let relative_x = x.saturating_sub(title_start);
-
-    if relative_x >= 10 && relative_x < 17 {
-        QueryButton::Run
-    } else if relative_x >= 18 && relative_x < 27 {
-        QueryButton::Clear
-    } else if relative_x >= 28 && relative_x < 36 {
-        QueryButton::Copy
+fn get_button_style(button: QueryButton, selected: QueryButton, hovered: QueryButton, theme: &Theme) -> Style {
+    if button == selected {
+        theme.button_active_style()
+    } else if button == hovered {
+        theme.button_hover_style()
     } else {
-        QueryButton::None
+        theme.button_style()
     }
 }
