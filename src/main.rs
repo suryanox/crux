@@ -209,28 +209,43 @@ async fn handle_browser_event(app: &mut App<'_>, event: Event) {
     match event {
         Event::Mouse(mouse) => {
             match mouse.kind {
-                MouseEventKind::Down(MouseButton::Left) => {
-                    if let Some(ref region) = app.button_region {
-                        let button = region.hit_test(mouse.column, mouse.row);
-                        match button {
-                            QueryButton::Run => {
-                                execute_query(app).await;
-                                return;
-                            }
-                            QueryButton::Clear => {
-                                app.clear_query();
-                                return;
-                            }
-                            QueryButton::Copy => {
-                                copy_query_to_clipboard(app);
-                                return;
-                            }
-                            QueryButton::None => {}
-                        }
+                MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
+                    if let Some(ratio) = app.results_state.scrollbar_region.hit_test_vertical(mouse.column, mouse.row) {
+                        let total_rows = app.query_result.rows.len();
+                        app.results_state.scroll_to_vertical_ratio(ratio, total_rows);
+                        app.focus = Focus::Results;
+                        return;
                     }
 
-                    if app.handle_sidebar_click(mouse.column, mouse.row) {
+                    if let Some(ratio) = app.results_state.scrollbar_region.hit_test_horizontal(mouse.column, mouse.row) {
+                        app.results_state.scroll_to_horizontal_ratio(ratio);
+                        app.focus = Focus::Results;
                         return;
+                    }
+
+                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        if let Some(ref region) = app.button_region {
+                            let button = region.hit_test(mouse.column, mouse.row);
+                            match button {
+                                QueryButton::Run => {
+                                    execute_query(app).await;
+                                    return;
+                                }
+                                QueryButton::Clear => {
+                                    app.clear_query();
+                                    return;
+                                }
+                                QueryButton::Copy => {
+                                    copy_query_to_clipboard(app);
+                                    return;
+                                }
+                                QueryButton::None => {}
+                            }
+                        }
+
+                        if app.handle_sidebar_click(mouse.column, mouse.row) {
+                            return;
+                        }
                     }
                 }
                 MouseEventKind::Moved => {

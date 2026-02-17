@@ -9,12 +9,47 @@ use unicode_width::UnicodeWidthStr;
 use crate::db::QueryResult;
 use super::theme::Theme;
 
+#[derive(Debug, Clone, Default)]
+pub struct ScrollbarRegion {
+    pub vertical: Option<Rect>,
+    pub horizontal: Option<Rect>,
+    pub vertical_content_length: usize,
+    pub horizontal_content_length: usize,
+    pub visible_height: usize,
+    pub visible_width: u16,
+}
+
+impl ScrollbarRegion {
+    pub fn hit_test_vertical(&self, x: u16, y: u16) -> Option<f32> {
+        if let Some(rect) = self.vertical {
+            if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+                let relative_y = y.saturating_sub(rect.y) as f32;
+                let ratio = relative_y / rect.height as f32;
+                return Some(ratio.clamp(0.0, 1.0));
+            }
+        }
+        None
+    }
+
+    pub fn hit_test_horizontal(&self, x: u16, y: u16) -> Option<f32> {
+        if let Some(rect) = self.horizontal {
+            if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+                let relative_x = x.saturating_sub(rect.x) as f32;
+                let ratio = relative_x / rect.width as f32;
+                return Some(ratio.clamp(0.0, 1.0));
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ResultsState {
     pub selected_row: usize,
     pub scroll_offset: usize,
     pub horizontal_scroll: usize,
     pub column_widths: Vec<u16>,
+    pub scrollbar_region: ScrollbarRegion,
 }
 
 impl ResultsState {
@@ -27,6 +62,21 @@ impl ResultsState {
         self.scroll_offset = 0;
         self.horizontal_scroll = 0;
         self.column_widths.clear();
+        self.scrollbar_region = ScrollbarRegion::default();
+    }
+
+    pub fn scroll_to_vertical_ratio(&mut self, ratio: f32, total_rows: usize) {
+        if total_rows == 0 {
+            return;
+        }
+        let max_offset = total_rows.saturating_sub(self.scrollbar_region.visible_height);
+        self.scroll_offset = ((ratio * max_offset as f32) as usize).min(max_offset);
+        self.selected_row = self.scroll_offset;
+    }
+
+    pub fn scroll_to_horizontal_ratio(&mut self, ratio: f32) {
+        let max_scroll = self.scrollbar_region.horizontal_content_length;
+        self.horizontal_scroll = ((ratio * max_scroll as f32) as usize).min(max_scroll);
     }
 
     pub fn select_next(&mut self, total_rows: usize) {
@@ -179,6 +229,11 @@ pub fn render_results(
 
     frame.render_widget(table, area);
 
+    state.scrollbar_region.visible_height = visible_height;
+    state.scrollbar_region.visible_width = area.width.saturating_sub(3);
+    state.scrollbar_region.vertical = None;
+    state.scrollbar_region.horizontal = None;
+
     if result.rows.len() > visible_height {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("▲"))
@@ -195,6 +250,9 @@ pub fn render_results(
             1,
             area.height.saturating_sub(3),
         );
+
+        state.scrollbar_region.vertical = Some(scrollbar_area);
+        state.scrollbar_region.vertical_content_length = result.rows.len();
 
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
@@ -218,6 +276,9 @@ pub fn render_results(
             area.width.saturating_sub(2),
             1,
         );
+
+        state.scrollbar_region.horizontal = Some(scrollbar_area);
+        state.scrollbar_region.horizontal_content_length = max_h_scroll;
 
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }

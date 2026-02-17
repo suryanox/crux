@@ -46,48 +46,20 @@ pub fn render_query_panel(
     hovered_button: QueryButton,
     theme: &Theme,
 ) -> ButtonRegion {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(3)])
-        .split(area);
-
-    let button_area = chunks[0];
-    let editor_area = chunks[1];
-
-    let inner_button_area = Rect::new(
-        button_area.x + 1,
-        button_area.y + 1,
-        button_area.width.saturating_sub(2),
-        1,
-    );
+    let editor_area = area;
 
     let run_width = 10u16;
     let clear_width = 11u16;
     let copy_width = 10u16;
-    let spacing = 2u16;
+    let spacing = 1u16;
+    let total_buttons_width = run_width + clear_width + copy_width + spacing * 2;
 
-    let run_rect = Rect::new(inner_button_area.x, inner_button_area.y, run_width, 1);
-    let clear_rect = Rect::new(inner_button_area.x + run_width + spacing, inner_button_area.y, clear_width, 1);
-    let copy_rect = Rect::new(inner_button_area.x + run_width + spacing + clear_width + spacing, inner_button_area.y, copy_width, 1);
+    let buttons_x = area.x + area.width.saturating_sub(total_buttons_width + 2);
+    let buttons_y = area.y;
 
-    let button_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.block_style(focused))
-        .style(Style::default().bg(theme.bg_secondary));
-
-    frame.render_widget(button_block, button_area);
-
-    let run_style = get_button_style(QueryButton::Run, selected_button, hovered_button, theme);
-    let clear_style = get_button_style(QueryButton::Clear, selected_button, hovered_button, theme);
-    let copy_style = get_button_style(QueryButton::Copy, selected_button, hovered_button, theme);
-
-    let run_text = format!(" {} Run ", icons::PLAY);
-    let clear_text = format!(" {} Clear ", icons::CLEAR);
-    let copy_text = format!(" {} Copy ", icons::COPY);
-
-    frame.render_widget(Paragraph::new(run_text).style(run_style), run_rect);
-    frame.render_widget(Paragraph::new(clear_text).style(clear_style), clear_rect);
-    frame.render_widget(Paragraph::new(copy_text).style(copy_style), copy_rect);
+    let run_rect = Rect::new(buttons_x, buttons_y, run_width, 1);
+    let clear_rect = Rect::new(buttons_x + run_width + spacing, buttons_y, clear_width, 1);
+    let copy_rect = Rect::new(buttons_x + run_width + spacing + clear_width + spacing, buttons_y, copy_width, 1);
 
     let mut ta = textarea.clone();
     ta.set_block(
@@ -101,6 +73,18 @@ pub fn render_query_panel(
     ta.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED).bg(theme.accent));
 
     frame.render_widget(&ta, editor_area);
+
+    let run_style = get_button_style(QueryButton::Run, selected_button, hovered_button, theme);
+    let clear_style = get_button_style(QueryButton::Clear, selected_button, hovered_button, theme);
+    let copy_style = get_button_style(QueryButton::Copy, selected_button, hovered_button, theme);
+
+    let run_text = format!(" {} Run ", icons::PLAY);
+    let clear_text = format!(" {} Clear ", icons::CLEAR);
+    let copy_text = format!(" {} Copy ", icons::COPY);
+
+    frame.render_widget(Paragraph::new(run_text).style(run_style), run_rect);
+    frame.render_widget(Paragraph::new(clear_text).style(clear_style), clear_rect);
+    frame.render_widget(Paragraph::new(copy_text).style(copy_style), copy_rect);
 
     ButtonRegion {
         run: run_rect,

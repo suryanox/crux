@@ -35,7 +35,10 @@ impl DatabaseConnection {
             Self::Postgres(pool) => {
                 let rows = sqlx::query(
                     "SELECT table_schema, table_name FROM information_schema.tables 
-                     WHERE table_schema NOT IN ('pg_catalog', 'information_schema') 
+                     WHERE table_type = 'BASE TABLE'
+                       AND table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+                       AND table_schema NOT LIKE 'pg_temp%'
+                       AND table_schema NOT LIKE 'pg_toast_temp%'
                      ORDER BY table_schema, table_name"
                 )
                 .fetch_all(pool)
@@ -52,7 +55,8 @@ impl DatabaseConnection {
             Self::MySql(pool) => {
                 let rows = sqlx::query(
                     "SELECT table_schema, table_name FROM information_schema.tables 
-                     WHERE table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') 
+                     WHERE table_type = 'BASE TABLE'
+                       AND table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
                      ORDER BY table_schema, table_name"
                 )
                 .fetch_all(pool)
@@ -67,8 +71,13 @@ impl DatabaseConnection {
                     .collect())
             }
             Self::Sqlite(pool) => {
+                // Only show user tables, exclude sqlite internal and common auto-created tables
                 let rows = sqlx::query(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    "SELECT name FROM sqlite_master 
+                     WHERE type = 'table' 
+                       AND name NOT LIKE 'sqlite_%'
+                       AND name NOT LIKE '_litestream%'
+                     ORDER BY name"
                 )
                 .fetch_all(pool)
                 .await?;
